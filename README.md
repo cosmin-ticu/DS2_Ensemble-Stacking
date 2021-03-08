@@ -6,3 +6,4 @@ This [GitHub repository](https://github.com/cosmin-ticu/DS2_Ensemble-Stacking) c
 
 Special credits go to:
 * [Zoltan Papp](https://github.com/pappzoltan) - provided skeleton of the codes, functions and guidance to conduct the data analysis during his course
+* [Gabor Bekes & Gabor Kezdi](https://gabors-data-analysis.com/data-and-code/) - provided skeleton of the helper functions
