@@ -10,8 +10,6 @@ library(caTools)
 library(pROC)
 library(viridis)
 
-source("code/helper/da_helper_functions.R")
-
 data <- as_tibble(ISLR::OJ)
 
 table(data$Purchase)
@@ -57,7 +55,7 @@ train_control <- trainControl(
   classProbs = TRUE, # same as probability = TRUE in ranger
   summaryFunction = twoClassSummary,
   savePredictions = TRUE,
-  verboseIter = TRUE
+  verboseIter = F
 )
 
 
@@ -93,7 +91,7 @@ model_gbm <- train(Purchase~ .,
                    method = "gbm",
                    trControl = train_control,
                    tuneGrid = gbmGrid,
-                   verbose = T
+                   verbose = F
 )
 model_gbm # 500 trees, 5 nodes, 0.01 shrinkage and 2 min observations per tree
 
