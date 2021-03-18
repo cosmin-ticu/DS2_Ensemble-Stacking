@@ -3,6 +3,8 @@ rm(list=ls())
 
 library(tidyverse)
 library(caret)
+library(gbm)
+
 
 df <- as_tibble(ISLR::Hitters) %>%
   drop_na(Salary) %>%
@@ -47,6 +49,7 @@ plot(varImp(rf_model_10), top=10) # much more aggressive at the beginning
 
 # b. ----------------------------------------------------------------------
 
+# explanation for the findings can be found above or in the report (in-depth)
 
 # c. ----------------------------------------------------------------------
 

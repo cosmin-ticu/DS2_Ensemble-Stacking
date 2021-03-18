@@ -28,7 +28,7 @@ data_holdout <- data[-train_indices, ]
 fitControl <- trainControl(method = "cv", number = 5,
                            summaryFunction = twoClassSummary,
                            classProbs=TRUE,
-                           verboseIter = TRUE,
+                           verboseIter = F,
                            savePredictions = TRUE)
 set.seed(1234)
 model_tree_benchmark<-train(
@@ -66,7 +66,6 @@ tune_grid <- expand.grid(
 )
 
 
-# random forest
 set.seed(1234)
 model_rf <- train(Purchase~ .,
                   data = data_train,
@@ -75,7 +74,7 @@ model_rf <- train(Purchase~ .,
                   tuneGrid = tune_grid,
                   importance = "impurity"
 )
-model_rf
+model_rf # node size = 10 & mtry (variable selection) = 5
 
 
 ## Gradient Boosting Machine
@@ -93,35 +92,37 @@ model_gbm <- train(Purchase~ .,
                    tuneGrid = gbmGrid,
                    verbose = F
 )
-model_gbm # 500 trees, 5 nodes, 0.01 shrinkage and 2 min observations per tree
+model_gbm # 500 trees, 3 nodes, 0.01 shrinkage and 2 min observations per tree
 
 
 ## XGBoost
 
-xgb_grid <- expand.grid(nrounds = 500,
-                        max_depth = c(1, 3, 5, 7, 9),
-                        eta = c(0.005, 0.01),
-                        gamma = 0.01,
-                        colsample_bytree = c(0.3, 0.5, 0.7),
+xgb_grid <- expand.grid(nrounds = 500, # boosting iterations
+                        max_depth = c(1, 3, 5, 7, 9), # tree depth/ same as interaction.depth
+                        eta = c(0.005, 0.01), # shrinkage (same params as GBM)
+                        gamma = 0.01, # minimum loss reduction
+                        colsample_bytree = c(0.3, 0.5, 0.7), # subsample ratio of columns (similar to mtry)
                         min_child_weight = 1, # similar to n.minobsinnode
-                        subsample = c(0.5))
+                        subsample = c(0.5, 0.7)) # dataset subsample
 set.seed(1234)
 model_xgboost <- train(Purchase ~ .,
                        method = "xgbTree",
                        data = data_train,
                        trControl = train_control,
                        tuneGrid = xgb_grid)
-model_xgboost
+model_xgboost # depth of 3, shrinkage of 0.01 (same GBM), column sample 70%
 
 
 # c. ----------------------------------------------------------------------
 
+# get performance measures
 resamples <- resamples(list("decision_tree_benchmark" = model_tree_benchmark,
                             "rf" = model_rf,
                             "gbm" = model_gbm,
                             "xgboost" = model_xgboost))
 summary(resamples)
 
+# make it look nicer
 logit_models <- list()
 logit_models[["decision_tree_benchmark"]] <- model_tree_benchmark
 logit_models[["RF"]] <- model_rf
@@ -152,6 +153,8 @@ CV_AUC <- list()
 for (model_name in names(logit_models)) {
   CV_AUC[[model_name]] <- mean(CV_AUC_folds[[model_name]]$AUC)
 }
+
+knitr::kable(as.data.frame(CV_AUC), caption = 'Cross-validated AUC for all 4 models')
 
 # d. ----------------------------------------------------------------------
 

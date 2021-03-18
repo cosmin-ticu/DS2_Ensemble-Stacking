@@ -1,0 +1,478 @@
+---
+title: "DS2 Homework 1 Solution"
+author: "Cosmin Catalin Ticu"
+date: "3/18/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# clear memory
+rm(list=ls())
+```
+
+# GitHub repo [here](https://github.com/cosmin-ticu/DS2_Ensemble-Stacking)
+
+# 1. Tree Ensemble Models
+
+Let's take a look at the required packages for this part of the assignment and inspect the data. Looking at the target variable, we can see its binary distribution.
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(caret)
+library(rpart.plot)
+library(gbm)
+library(xgboost)
+library(caTools)
+library(pROC)
+library(viridis)
+
+data <- as_tibble(ISLR::OJ)
+
+table(data$Purchase)
+```
+
+## a. Create a training data of 75% and keep 25% of the data as a test set. Train a decision tree as a benchmark model. Plot the final model and interpret the result (using rpart and rpart.plot is an easier option).
+
+The data was split into training and test samples and a benchmark tree model was ran using all of the default options in caret package. Another option for building this model would have been to just have a single split tree. Nonetheless, it is more interesting to inspect and visualize a fully grown tree with the default settings.
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+# a. ----------------------------------------------------------------------
+
+
+# Work vs holdout sets
+set.seed(1234)
+train_indices <- as.integer(createDataPartition(data$Purchase, 
+                                                p = 0.75, list = FALSE))
+data_train <- data[train_indices, ]
+data_holdout <- data[-train_indices, ]
+
+fitControl <- trainControl(method = "cv", number = 5,
+                           summaryFunction = twoClassSummary,
+                           classProbs=TRUE,
+                           verboseIter = F,
+                           savePredictions = TRUE)
+set.seed(1234)
+model_tree_benchmark<-train(
+  Purchase~.,
+  data=data_train,
+  method="rpart",
+  trControl=fitControl
+)
+
+# look at the model summary statistics & details
+model_tree_benchmark
+
+```
+
+Plotting the decision tree performance (ROC) according to its complexity parameter, we see:
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+# plot the decision tree
+plot(model_tree_benchmark)
+
+```
+
+In the case of the default decision tree, it is worthwhile to stick with the smallest complexity parameter, meaning that the overall larger tree is preferred as it achieves a better accuracy.
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+# plot it looking nicer for easier interpretation
+rpart.plot(model_tree_benchmark$finalModel)
+```
+
+Looking at the RPART PLOT we can see that brand loyalty dominates orange juice decisions. Only once brand loyalty features have been exhausted, the price difference starts to make a significant change between brands.
+
+## b. Investigate tree ensemble models: random forest, gradient boosting machine, XGBoost. Try various tuning parameter combinations and select the best model using cross-validation.
+
+The following tree ensemble models are built: random forest, gradient boosting machine and XGBoost.
+
+The explanations for all of the tweaked parameters can be found in the codes below. The best models were identified in writing next to the function called the model result.
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+
+train_control <- trainControl(
+  method = "cv",
+  n = 5,
+  classProbs = TRUE, # same as probability = TRUE in ranger
+  summaryFunction = twoClassSummary,
+  savePredictions = TRUE,
+  verboseIter = F
+)
+```
+
+The training parameters were set. We can now run the models
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+
+## Probability Forest
+
+tune_grid <- expand.grid(
+  .mtry = c(2,3,4,5),
+  .splitrule = "gini",
+  .min.node.size = c(5, 10)
+)
+
+
+set.seed(1234)
+model_rf <- train(Purchase~ .,
+                  data = data_train,
+                  method = "ranger",
+                  trControl = train_control,
+                  tuneGrid = tune_grid,
+                  importance = "impurity"
+)
+model_rf # node size = 10 & mtry (variable selection) = 5
+
+```
+
+With a minimum node size of 10 observations and a random variable selection parameter of 5 variables, the RF model achieved a best ROC on the cross-validated sample of 0.8821306.
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+## Gradient Boosting Machine
+
+gbmGrid <-  expand.grid(interaction.depth = c(1, 3, 5, 7, 9), 
+                        n.trees = 500, # known standard for GBM (stabilizes later than RF)
+                        shrinkage = c(0.005, 0.01),
+                        n.minobsinnode = c(2,5)) # to check overfitting
+
+set.seed(1234)
+model_gbm <- train(Purchase~ .,
+                   data = data_train,
+                   method = "gbm",
+                   trControl = train_control,
+                   tuneGrid = gbmGrid,
+                   verbose = F
+)
+model_gbm # 500 trees, 3 nodes, 0.01 shrinkage and 2 min observations per node
+```
+
+With a maximum tree depth of 3, a shrinkage of 0.01 and 2 minimum observations per terminal node, the GBM model achieved a best ROC on the cross-validated sample of 0.8998992.
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+## XGBoost
+
+xgb_grid <- expand.grid(nrounds = 500, # boosting iterations
+                        max_depth = c(1, 3, 5, 7, 9), # tree depth/ same as interaction.depth
+                        eta = c(0.005, 0.01), # shrinkage (same params as GBM)
+                        gamma = 0.01, # minimum loss reduction
+                        colsample_bytree = c(0.3, 0.5, 0.7), # subsample ratio of columns (similar to mtry)
+                        min_child_weight = 1, # similar to n.minobsinnode
+                        subsample = c(0.5, 0.7)) # dataset subsample
+set.seed(1234)
+model_xgboost <- train(Purchase ~ .,
+                       method = "xgbTree",
+                       data = data_train,
+                       trControl = train_control,
+                       tuneGrid = xgb_grid)
+model_xgboost # depth of 3, shrinkage of 0.01 (same GBM), column sample 70%, subsample of 70%
+```
+
+With a maximum tree depth of 3, a shrinkage of 0.01, a column resampling of 70% as well as a dataset resampling of 70%, the XGBoost model achieved a best ROC on the cross-validated sample of 0.9004744. This is our best model.
+
+## c. Compare the performance of the different models (if you use caret you should consider using the resamples function). Make sure to set the same seed before model training for all 3 models so that your cross validation samples are the same. Is any of these giving significantly different predictive power than the others?
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+# c. ----------------------------------------------------------------------
+
+# get performance measures
+resamples <- resamples(list("decision_tree_benchmark" = model_tree_benchmark,
+                            "rf" = model_rf,
+                            "gbm" = model_gbm,
+                            "xgboost" = model_xgboost))
+summary(resamples)
+```
+
+The boosting algorithms appear to achieve a slightly better performance than the random forest model. This follows industry standards. It is worthwhile to consider that with a much smaller tree size, the random forest would probably inch forward as the best model, as it boosting algorithms rely on very weak classifiers that are not evenly distributed while random forest relies on entirely randomly created trees (uncorrelated, thus unbiased) leading to more "complex" individual tress (more complex only than the mere stumps of the boosting algos).
+
+Get a nicer looking comparison table of the resample performances
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+# make it look nicer
+logit_models <- list()
+logit_models[["decision_tree_benchmark"]] <- model_tree_benchmark
+logit_models[["RF"]] <- model_rf
+logit_models[["GBM"]] <- model_gbm
+logit_models[["XGBoost"]] <- model_xgboost
+
+CV_AUC_folds <- list()
+
+for (model_name in names(logit_models)) {
+  
+  auc <- list()
+  model <- logit_models[[model_name]]
+  for (fold in c("Fold1", "Fold2", "Fold3", "Fold4", "Fold5")) {
+    cv_fold <-
+      model$pred %>%
+      filter(Resample == fold)
+    
+    roc_obj <- roc(cv_fold$obs, cv_fold$CH)
+    auc[[fold]] <- as.numeric(roc_obj$auc)
+  }
+  
+  CV_AUC_folds[[model_name]] <- data.frame("Resample" = names(auc),
+                                           "AUC" = unlist(auc))
+}
+
+CV_AUC <- list()
+
+for (model_name in names(logit_models)) {
+  CV_AUC[[model_name]] <- mean(CV_AUC_folds[[model_name]]$AUC)
+}
+
+knitr::kable(as.data.frame(CV_AUC), caption = 'Cross-validated AUC for all 4 models')
+```
+
+Same finding here, but in a nicer looking format.
+
+## d. Choose the best model and plot ROC curve for the best model on the test set. Calculate and interpret AUC.
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+# d. ----------------------------------------------------------------------
+
+## ROC Plot with built-in package 
+gbm_pred<-predict(model_gbm, data_holdout, type="prob")
+colAUC(gbm_pred, data_holdout$Purchase, plotROC = TRUE)
+```
+
+AUC for the GBM model is 89% which is really good. We will choose this one as the best model.
+
+Plotting an ROC curve with own function looks a little nicer and allows later tweaking. AUC can be seen as highlighted region of plot (very good performance for a classification model).
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+## ROC plot with own function
+data_holdout[,"best_model_no_loss_pred"] <- gbm_pred[,"CH"]
+
+roc_obj_holdout <- roc(data_holdout$Purchase, data_holdout$best_model_no_loss_pred)
+
+createRocPlot <- function(r, plot_name) {
+  all_coords <- coords(r, x="all", ret="all", transpose = FALSE)
+  
+  roc_plot <- ggplot(data = all_coords, aes(x = fpr, y = tpr)) +
+    geom_line(color='blue', size = 0.7) +
+    geom_area(aes(fill = 'red', alpha=0.4), alpha = 0.3, position = 'identity', color = 'blue') +
+    scale_fill_viridis(discrete = TRUE, begin=0.6, alpha=0.5, guide = FALSE) +
+    xlab("False Positive Rate (1-Specifity)") +
+    ylab("True Positive Rate (Sensitivity)") +
+    geom_abline(intercept = 0, slope = 1,  linetype = "dotted", col = "black") +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, .1), expand = c(0, 0.01)) +
+    scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, .1), expand = c(0.01, 0)) + 
+    theme_bw()
+
+  roc_plot
+}
+
+createRocPlot(roc_obj_holdout, "ROC curve for best model (GBM)")
+```
+
+## e. Inspect variable importance plots for the 3 models. Are similar variables found to be the most important for the 3 models?
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+plot(varImp(model_rf), top = 10)
+```
+
+Loyalty to the CH brand prevails. The rest of the variables mostly concern the price as the differentiating factor. Nonetheless, the difference in importance between the first variable and the rest is significant.
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+plot(varImp(model_gbm), top = 10)
+```
+
+A notable change from the rf model, as that one is a bagged model, is that in the boosted models - Gradient Boosting Machine in this case, the rest of the variables (apart from LoyalCH) have a much lower importance. That is because boosted algorithms work with much simpler trees (stumps) within them and with shrinking parameters that ultimately penalize other variables each it is discovered that most of the variance can just be attributed to a variable as simple as brand loyalty. One could argue that the RF model, as a bagged model, allows for a better distribution of variables and a more equal inclusion in the models. For larger datasets, this could make RF and bagged models more robust overall. Thusm GBM is characterized by a more aggressive behavior of gradually drowning out variables.
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+plot(varImp(model_xgboost), top = 10)
+```
+
+The GBM model appears to give slightly less aggressive importance measures, but it still falls prey to the boosting algorithms aggressivity and variable drowning out. Depending on the case study, this could be an advantage.
+
+# 2. Variable Importance Profiles
+
+Load up the data and required packages.
+
+```{r, message=FALSE, warning=FALSE}
+# clear memory
+rm(list=ls())
+
+library(tidyverse)
+library(caret)
+library(gbm)
+
+df <- as_tibble(ISLR::Hitters) %>%
+  drop_na(Salary) %>%
+  mutate(log_salary = log(Salary), Salary = NULL)
+```
+
+## a. Train two random forest models: one with sampling 2 variables randomly for each split and one with 10 (use the whole dataset and don’t do cross-validation). Inspect variable importance profiles. What do you see in terms of how important the first few variables are relative to each other?
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+# a. ----------------------------------------------------------------------
+
+tune_grid <- expand.grid(
+  .mtry = 2,
+  .splitrule = "variance",
+  .min.node.size = c(5, 10)
+)
+# random forest with 2 randomly sampled variables each time
+set.seed(1234)
+rf_model_2 <- train(log_salary ~ .,
+                    method = "ranger",
+                    data = df,
+                    tuneGrid = tune_grid,
+                    importance = "impurity"
+)
+
+
+tune_grid <- expand.grid(
+  .mtry = 10,
+  .splitrule = "variance",
+  .min.node.size = c(5, 10)
+)
+
+# random forest with 10 randomly sampled variables each time
+set.seed(1234)
+rf_model_10 <- train(log_salary ~ .,
+                    method = "ranger",
+                    data = df,
+                    tuneGrid = tune_grid,
+                    importance = "impurity"
+)
+
+plot(varImp(rf_model_2), top=10) 
+# much more balanced model as more "equal" shot are given to each variable
+```
+
+In the case of the variable importance plot for the random forest model with 2 variables, we can see that the distribution of importance is gradually decreasing as more "equal" shot are given to each variable.
+
+## b. One of them is more extreme in terms of how the most important and the next ones relate to each other. Give an intuitive explanation how mtry/mtries relates to relative importance of variables in random forest models.
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+plot(varImp(rf_model_10), top=10) 
+# much more aggressive at the beginning
+```
+
+This is not the case when inspecting the random forest model with 10 variables subsampled with every tree. Not only does this increase the complexity of the model, but it penalizes certain variables early on, thus perpetuating their importance (or lack thereof) for the later stages. It is worthwhile to consider this type of algorithmic tuning, as it can yield drastically different results. If one is interested in identifying the truly top variable that explains the largest share of variance, then an aggressive model with a high mtry parameter should be used. However, if a more balanced model with hopes of predictive power needs to be identified, then using a lower mtry parameter seems to be the better choice.
+
+It would be important to mention that tweaking the number of trees for the random forest model to a very high number would yield extremely close results between the two mtry-differing models (as variable importance would stablize in the long run).
+
+## c. In the same vein, estimate two gbm models with varying rate of sampling for each tree (use 0.1 and 1 for the parameter bag.fraction/sample_rate). Hold all the other parameters fixed: grow 500 trees with maximum depths of 5, applying a learning rate of 0.1. Compare variable importance plots for the two models. Could you explain why is one variable importance profile more extreme than the other?
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+gbm_grid <- expand.grid(n.trees = 500, 
+                        interaction.depth = 5, # maximum depth
+                        shrinkage = 0.1,
+                        n.minobsinnode = 5) # generic choice of 5 observations - not important in this case
+set.seed(1234)
+gbm_model_01_sample <- train(log_salary ~ .,
+                      method = "gbm",
+                      data = df,
+                      bag.fraction=0.1,
+                      tuneGrid = gbm_grid,
+                      verbose = FALSE # gbm by default prints too much output
+)
+
+set.seed(1234)
+gbm_model_full_sample <- train(log_salary ~ .,
+                      method = "gbm",
+                      data = df,
+                      bag.fraction=1,
+                      tuneGrid = gbm_grid,
+                      verbose = FALSE # gbm by default prints too much output
+)
+plot(varImp(gbm_model_01_sample), top=10) # more balanced model
+```
+
+When examining the first variable importance plot for the GBM model with a subsampling parameter of 10%, we see a more even distribution of variable importance, following the same trend as the RF with a lower mtry parameter. Using only small chunks of the dataset allows for certain parts of the dataset to be better explained by certain variables. As an intuitive example, in the case of a random 10% subsample, we might only get data on a specific number of home runs, assists and walks, thus warranting that their associated variables appear more important for this respective dataset.
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+plot(varImp(gbm_model_full_sample), top=10) # more aggressive from beginning
+```
+
+I would make an analogy of the GBM model with the full sample each time as a more aggressive model from the get-go. Using the entire dataset means that most of the trees behave similarly, thus reinforcing the findings of the initial very first tree. This can be summed up as using highly correlated trees to one-another. It is not worthwhile to run this algorithm with the full dataset, as it can easily overfit the data due to obvious and severe correlations between all the trees. With much too high correlations, we can expect the shrinkage function to not be as effective in giving weights to each tree, as they are all highly correlated. It has actually been proven in the industry that using an aggressive subsampling approach high reduces over-fitting, making the model more robust.
+
+# 3. Stacking
+
+This part of the assignment will leverage both the caret package and the h2o package.
+
+Load up data and required packages. Launch an h2o instance of at least 4GB and at most 8GB for the interim computations.
+
+```{r, message=FALSE, warning=FALSE}
+# clear memory
+rm(list=ls())
+
+library(tidyverse)
+library(h2o)
+library(caret)
+library(caretEnsemble)
+library(pROC)
+library(caTools)
+
+# h2o.shutdown()
+h2o.init(min_mem_size = '4g' ,max_mem_size = '8g')
+data3 <- read_csv("https://raw.githubusercontent.com/cosmin-ticu/DS2_Ensemble-Stacking/main/data/KaggleV2-May-2016.csv")
+
+# some data cleaning
+data3 <- select(data3, -one_of(c("PatientId", "AppointmentID", "Neighbourhood"))) %>%
+  janitor::clean_names()
+
+# for binary prediction, the target variable must be a factor + generate new variables
+data3 <- mutate(
+  data3,
+  no_show = factor(no_show, levels = c("Yes", "No")),
+  handcap = ifelse(handcap > 0, 1, 0),
+  across(c(gender, scholarship, hipertension, alcoholism, handcap, diabetes), factor),
+  hours_since_scheduled = as.numeric(appointment_day - scheduled_day)
+)
+
+# clean up a little bit
+data3 <- filter(data3, between(age, 0, 95), hours_since_scheduled >= 0) %>%
+  select(-one_of(c("scheduled_day", "appointment_day", "sms_received")))
+
+data3 <- as.h2o(data3)
+```
+
+Take a look at the data as well.
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+# Peek at the data
+skimr::skim(data3)
+```
+
+## a. Create train / validation / test sets, cutting the data into 5% - 45% - 50% parts.
+
+Doing so with the H20 package function.
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+# a. ----------------------------------------------------------------------
+
+## Create train / validation / test sets, cutting the data into 5% - 45% - 50% parts.
+splitted_data <- h2o.splitFrame(data3, 
+                                ratios = c(0.05, 0.5), 
+                                seed = 123)
+str(splitted_data)
+data_train <- splitted_data[[1]]
+data_validation <- splitted_data[[2]]
+data_test <- splitted_data[[3]]
+```
+
+## b. Train a benchmark model of your choice (such as random forest, gbm or glm) and evaluate it on the validation set.
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+# b. ----------------------------------------------------------------------
+
+y <- "no_show"
+X <- setdiff(names(data3), y)
+
+rf_model_benchmark <- h2o.randomForest(
+  X, y,
+  training_frame = data_train,
+  ntrees = 500, 
+  mtries = 2,
+  seed = 123,
+  nfolds = 5)
+
+# xval stands for 'cross-validation'
+print(h2o.performance(rf_model_benchmark, xval = TRUE))
+
+rf_benchmark<- h2o.auc(h2o.performance(rf_model_benchmark, newdata = data_validation))
+rf_benchmark
+```
+
