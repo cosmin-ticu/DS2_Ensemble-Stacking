@@ -7,6 +7,7 @@ library(caret)
 library(caretEnsemble)
 library(pROC)
 library(caTools)
+library(data.table)
 
 # h2o.shutdown()
 h2o.init(min_mem_size = '4g' ,max_mem_size = '8g')
